@@ -1,1 +1,2 @@
-# software_architecture_course
+Andrii Pyroh
+PE-21-3
