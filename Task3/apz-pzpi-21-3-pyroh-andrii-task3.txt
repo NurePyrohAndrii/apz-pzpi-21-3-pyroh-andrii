@@ -1,0 +1,463 @@
+1 Опис прийнятих інженерних рішень
+
+Для створення програмного забезпечення для IoT пристрою було використано симулятор Wokwi. 
+Код для пристрою написаний на мові програмування С++. 
+У якості IoT пристрою виступає пристрій для відстеження довкілля, що вимірює вологість і температуру як повітря так і грунту. 
+Крім того, пристрій використовує люксометр для вимірювання освітленості. 
+Пристрій складається із мікроконтролера ESP32, двох датчиків DHT, фоторезистора та LCD дисплею (рис. 1). 
+
+2 Пояснення програмного коду
+
+Після запуску пристрою, користувач має змогу вказати бажану величину швидкості передачі даних пристрою (Baud rate). 
+Після встановлення цього параметру, у користувача запитується ID пристрою. ID служить для асоціації пристрою з певними лозами. 
+Після цього він автоматично шукає доступні мережі Wi-fi для підключення до інтернету. Частина коду, відповідальна за це зазначена нижче:
+1 // Scan for available networks
+2 int numNetworks = WiFi.scanNetworks();
+3 Serial.println("Available networks:");
+4 for (int i = 0; i < numNetworks && i < MAX_NETWORKS; i++) {
+5    availableNetworks[i].ssid = WiFi.SSID(i);
+6    availableNetworks[i].password = "";
+7 Serial.println(String(i) + "#" + availableNetworks[i].ssid);
+8 }
+	Потім користувач може обрати мережі, до яких він може приєднатись. Для подальшої роботи пристрою необхідно налаштувати веб-сервер. 
+Після цього процесу, відкриваються 2 точки доступу до нього. Перша, це відповідає за початок процесу спостереження та збору даних з датчиків з певною періодичністю, 
+яку користувач зазначає в тілі запиту методу POST. Знизу зображений код відповідальний за ці дії:
+1   server.on("/" + String(deviceID) + "/start", HTTP_POST, []() {
+2       if (measuring) {
+3           server.send(400, "application/json", "{\"error\":\"Measurement already in progress\"}");
+4           return;
+5       }
+6   
+7       String requestBody = server.arg("plain");
+8       JsonDocument doc;
+9       DeserializationError error = deserializeJson(doc, requestBody);
+10  
+11      if (error) {
+12          server.send(400, "application/json", "{\"error\":\"Invalid request\"}");
+13          return;
+14      }
+15  
+16      measureFrequency = doc["frequency"].as<int>() * 1000;
+17      setTimeFromString(doc["timestamp"].as<String>());
+18  
+19      startMeasure();
+20      server.send(200, "application/json", "{\"message\":\"Measurement started\"}");
+21  }); 
+Друга точка доступу сигналізую пристрою щоб той припиняв свою роботу і надсилав, зібрані за час після першого запиту, дані на сервер у відповідь.
+Параметри, які користувач передає через тіло запиту валідуються, і в разі виникнення помилки опрацювання значень цих параметрів, пристрій повідомить сервер відповідною відповіддю на його запит, тобто поверне 400 код (BAD_REQUEST) та пояснююче повідомлення.
+	Логіка збору даних періодично написана у головній функції loop(), її код наведено нижче:
+1   void loop() { // Main loop function
+2       server.handleClient();
+3       if (measuring && millis() - lastMeasurement >= measureFrequency) {
+4           readData();
+5           lastMeasurement = millis(); // Update the last measurement time
+6       }
+7       delay(50);
+8   }
+Для вирахування значення освітленості із значення опору, під час опромінення світлом фоторезистора, використаємо формулу, яка наведена у коді нижче:
+1   float calculateLux(float LdrValue){ 
+2       float voltage = LdrValue / 1024.0 * 5.0 / 4.0;  
+3       float resistance = 2000.0 * voltage / (1 - voltage / 5.0); 
+4       float lux = pow(RL10 * 1000.0 * pow(10.0, GAMMA) / resistance, 1.0 / GAMMA);  
+5       return lux;  
+6   }
+Для синхронізації часу пристрою з сервером, цей час передається у тілі до POST запиту сервером, який знає актуальний час, і цей час встановлюється на пристрої. 
+Пристрій фіксує дані у визначений сервером час, що нівелює у повній мірі неточність у синхронізації пристрою і серверу. 
+Код, який відповідає за встановлення часу пристрою, наведено нижче:
+1   void setTimeFromString(String timeString) {  // Set the time of the device from a string in ISO 8601 format
+2       struct tm tm;
+3       strptime(timeString.c_str(), "%Y-%m-%dT%H:%M:%SZ", &tm); // Parse the time string into a tm structure
+4       time_t t = mktime(&tm); // Convert tm structure to time_t
+5       struct timeval now = { .tv_sec = t }; // Create a timeval structure with the converted time
+6       settimeofday(&now, NULL); // Set the system time
+7   }
+Сервер після запиту для отримання даних, у відповіді має детальний звіт у форматі JSON з усіма необхідними даними і часовими мітками у форматі масиву JSON об’єктів. 
+Приклад таких об’єктів наведено нижче:
+    "data": [
+        {
+            "air_temperature": 24.00,
+            "air_humidity": 40.00,
+            "gnd_temperature": 20.00,
+            "gnd_humidity": 48.00,
+            "lux": 499.86,
+            "timestamp": "2024-05-07T08:25:00Z"
+        },
+        {
+            "air_temperature": 23.00,
+            "air_humidity": 40.00,
+            "gnd_temperature": 21.00,
+            "gnd_humidity": 48.00,
+            "lux": 501.24,
+            "timestamp": "2024-05-07T08:25:01Z"
+       }, …
+
+	Також варто відзанчити структуру проекту, код розділений на визначену кількість файлі, кожен з яких містить свою частину функціоналу, 
+що робить код більш зручним для підтримки. Щоб звести до мінімуму потенціал помилок, 
+використовуються файли заголовків для зберігання оголошень змінних та функцій підмодулю. Файлова структура наведена нижче:
+     src/
+	-lcd.cpp
+	-lcd.h
+	-measure.cpp
+	-measure.h
+	-network.cpp
+	-network.h
+	-sensor.cpp
+	-sensor.h
+	-server.cpp
+	-utils.cpp
+	-utils.h
+
+3 UML Діаграми системи
+3.1 UML Діаграма прецедентів
+
+Для ІоТ пристрою було створено діаграму прецедентів (рис. 2). Для використання пристрою зазначено одного актора - Користувач. 
+Для нього доступні можливості вибрати Wi-fi для підключення, встановити ID пристрою та ввести швидкість передачі даних. 
+Також користувач має можливість встановлювати періодичність збору даних як параметри запиту.
+
+3.2 UML Діаграма взаємодії 
+
+Також було створено діаграму взаємодії (рис. 3). Вона надає можливість візуалізувати, як компоненти IoT пристрою взаємодіють між собою в межах системи. 
+Крім того, вона дозволяє зрозуміти логіку роботи пристрою.
+
+3.3 UML Діаграма пакетів
+
+Діаграма пакетів для ІоТ пристрою містить 6 пакетів (рис. 4). Сервер є головним пакетом, який містить основну логіку роботи програми та керує використання інших компонентів.
+
+3.4 UML Діаграма активності
+
+Також було створено діаграму активності (рис. 5). Ця діаграма в загальних рисах показує процес роботи ІоТ пристрою. Вона надає можливість зрозуміти дії та процеси, що відбувається в системі.
+
+4 Висновки 
+
+Під час виконання лабораторної роботи було створено IOT частину програмної системи для контролю за виноградниками. 
+
+ДОДАТОК А
+Програмний код IoT застосунку
+
+	Файл lcd.h:
+1   #include <LiquidCrystal_I2C.h>
+2   
+3   extern LiquidCrystal_I2C lcd; // LCD display properties
+4   
+5   void initializeLCD();
+6   void displayMessage(const String& message);
+
+Файл lcd.cpp:
+1   #include "lcd.h"
+2   
+3   LiquidCrystal_I2C lcd(0x27, 16, 2); // Initialize LCD with I2C address 0x27 for a 16x2 display
+4   
+5   void initializeLCD() { // Function to initialize the LCD display
+6       lcd.init(); // Initialize the LCD
+7       lcd.backlight(); // Turn on the backlight
+8   }
+9   
+10  void displayMessage(const String& message) { // Function to display a message on the LCD display
+11      lcd.clear(); // Clear the display
+12      lcd.setCursor(0, 0); // Set the cursor to the top-left corner
+13      lcd.print(message); // Print the message on the LCD
+14  }
+
+
+Файл measure.h:
+1   #include <Arduino.h>
+2   
+3   extern bool measuring; // Flag to control the measuring
+4   extern String accumulatedData; // String to accumulate the data
+5   extern int measureFrequency; // Measurement frequency in milliseconds
+6   extern unsigned long lastMeasurement; // Time of the last measurement
+7   
+8   void startMeasure();
+9   void stopMeasure();
+10  void readData();
+
+Файл measure.cpp:
+1   #include "lcd.h"
+2   #include "measure.h"
+3   #include <chrono>
+4   #include <iomanip>
+5   #include <sstream>
+6   #include "sensor.h"
+7   
+8   bool measuring = false; // Flag to control the measuring
+9   String accumulatedData = ""; // String to accumulate the data
+10  int measureFrequency = 1000; // Measurement frequency in milliseconds
+11  unsigned long lastMeasurement = 0; // Time of the last measurement
+12  
+13  // Constants for the photoresistor calculation
+14  const float GAMMA = 0.7;
+15  const float RL10 = 50;
+16  
+17  void startMeasure() { // Function to start the measurement
+18      measuring = true;
+19      Serial.println("Measurement started");
+20      displayMessage("Measuring...");
+21  }
+22  
+23  void stopMeasure() { // Function to stop the measurement
+24      measuring = false;
+25      Serial.println("Measurement stopped");
+26      displayMessage("Waiting for request...");
+27  }
+28  
+29  float calculateLux(float LdrValue){ // Function to calculate the lux value from the photoresistor value
+30      float voltage = LdrValue / 1024.0 * 5.0 / 4.0;
+31      float resistance = 2000.0 * voltage / (1.0 - voltage / 5.0);
+32      float lux = pow(RL10 * 1000.0 * pow(10.0, GAMMA) / resistance, 1.0 / GAMMA);
+33      return lux;
+34  }
+35  
+36  void readData() { // Function to read data from the DHT sensors and photoresistor
+37      if (!measuring) return; // Only read data if measuring is true
+38  
+39      // Current time in ISO 8601 format  
+40      auto now = std::chrono::system_clock::now();
+41      auto now_c = std::chrono::system_clock::to_time_t(now);
+42      std::stringstream ss;
+43      ss << std::put_time(std::localtime(&now_c), "%FT%TZ"); // ISO 8601 format
+44      String timeData = "\"timestamp\":\"" + String(ss.str().c_str()) + "\"";
+45  
+46      float air_humidity = dht_air.readHumidity();
+47      float air_temperature = dht_air.readTemperature();
+48      float gnd_humidity = dht_gnd.readHumidity();
+49      float gnd_temperature = dht_gnd.readTemperature();
+50  
+51      float currentLdrValue = (float) analogRead(LDR_PIN);
+52      float measuredLux = calculateLux(currentLdrValue);
+53  
+54      if (isnan(air_humidity) || isnan(air_temperature) || isnan(gnd_humidity) || isnan(gnd_temperature) || isnan(measuredLux)) {
+55          return; // Skip this reading if any data is not valid
+56      }
+57  
+58      // Create data string
+59      String data = "{ \"air_temperature\":" + String(air_temperature, 2) +
+60                    ", \"air_humidity\":" + String(air_humidity, 2) +
+61                    ", \"gnd_temperature\":" + String(gnd_temperature, 2) +
+62                    ", \"gnd_humidity\":" + String(gnd_humidity, 2) +
+63                    ", \"lux\":" + String(measuredLux, 2) +
+64                    ", " + timeData + "},";
+65  
+66      accumulatedData += data; // Append this data to the accumulated data
+67  }
+
+Файл network.h:
+1   #ifndef NETWORK_H
+2   #define NETWORK_H
+3   
+4   #include <WiFi.h>
+5   
+6   // Network information global variables and constants
+7   extern int serialBaudRate; // Default serial communication properties if the user does not specify
+8   extern int numNetworks;
+9   extern const int MAX_NETWORKS;
+10  extern int deviceID;
+11  
+12  struct NetworkInfo { // Struct to store network information
+13      String ssid;
+14      String password;
+15  };
+16  
+17  extern NetworkInfo availableNetworks[];
+18  
+19  void connectToWiFi();
+20  void determineBaudRate();
+21  void askDeviceId();
+22  
+23  #endif
+
+Файл network.cpp:
+1   #include "network.h"
+2   #include "lcd.h"
+3   
+4   int serialBaudRate = 115200; // Default serial communication properties
+5   const int MAX_NETWORKS = 10;
+6   NetworkInfo availableNetworks[MAX_NETWORKS];
+7   int numNetworks = 0;
+8   int deviceID = 0;
+9   
+10  void connectToWiFi() { // Function to connect to WiFi
+11      displayMessage("Connecting to WiFi...");
+12      Serial.println("Scanning for available networks...");
+13  
+14      // Scan for available networks
+15      int numNetworks = WiFi.scanNetworks();
+16  
+17      if (numNetworks == 0) {
+18          Serial.println("No networks found. Please check your WiFi module.");
+19          while (true) {
+20              delay(1000);
+21          }
+22      }
+23  
+24      Serial.println("Available networks:");
+25      for (int i = 0; i < numNetworks && i < MAX_NETWORKS; i++) {
+26          availableNetworks[i].ssid = WiFi.SSID(i);
+27          availableNetworks[i].password = "";
+28          Serial.println(String(i) + "#" + availableNetworks[i].ssid);
+29      }
+30  
+31      // Let the user or device choose a network to connect to
+32      int selectedNetwork = -1;
+33      Serial.println("Enter the number of the network you want to connect to:");
+34      while (selectedNetwork < 0 || selectedNetwork >= numNetworks) {
+35          if (Serial.available() > 0) {
+36              selectedNetwork = Serial.parseInt();
+37          }
+38      }
+39  
+40      Serial.println("Connecting to " + availableNetworks[selectedNetwork].ssid);
+41  
+42      // Connect to the selected network
+43      WiFi.begin(availableNetworks[selectedNetwork].ssid.c_str(),
+44                 availableNetworks[selectedNetwork].password.c_str());
+45      while (WiFi.status() != WL_CONNECTED) {
+46          delay(1000);
+47          Serial.println("Connecting...");
+48      }
+49  
+50      Serial.println("Connected to WiFi");
+51      Serial.println("IP address: " + WiFi.localIP().toString());
+52      displayMessage("Connected to WiFi");
+53  }
+54  
+55  void determineBaudRate() { // Function to determine the baud rate that the user wants to use
+56      Serial.println("Enter the desired baud rate:");
+57  
+58      while (!Serial.available()) { // Wait for user input
+59      }
+60  
+61      serialBaudRate = Serial.parseInt(); // Read the user input and set the baud rate
+62      Serial.begin(serialBaudRate);
+63  
+64      Serial.print("Baud rate set to ");
+65      Serial.println(serialBaudRate);
+66  }
+67  
+68  void askDeviceId() { // Function to ask the user for the device ID
+69      Serial.println("Enter the device ID:");
+70      while (!Serial.available()) { // Wait for user input
+71      }
+72  
+73      deviceID = Serial.parseInt(); // Read the user input and set the device ID
+74      Serial.print("Device ID set to ");
+75      Serial.println(deviceID);
+76  }
+
+Файл sensor.h:
+1   #include "DHT.h"
+2   
+3   // DHT sensors properties
+4   #define DHT_AIR_PIN 13        // Air DHT sensor pin
+5   #define DHT_AIR_TYPE DHT22    // Air DHT sensor type
+6   #define DHT_GND_PIN 12        // Ground DHT sensor pin
+7   #define DHT_GND_TYPE DHT22    // Ground DHT sensor type
+8   
+9   #define LDR_PIN 35            // Photoresistor pin
+10  
+11  // Initialize the DHT sensor
+12  extern DHT dht_air;           // External declaration for air DHT sensor
+13  extern DHT dht_gnd;           // External declaration for ground DHT sensor
+
+Файл sensor.cpp:
+1   #include "sensor.h"
+2   
+3   DHT dht_air(DHT_AIR_PIN, DHT_AIR_TYPE); // Initialize air DHT sensor
+4   DHT dht_gnd(DHT_GND_PIN, DHT_GND_TYPE); // Initialize ground DHT sensor
+
+Файл util.h:
+1   #include <chrono>
+2   #include <Arduino.h>
+3
+4   void setTimeFromString(String timeString);
+
+Файл util.cpp:
+1   #include "utils.h"
+2
+3   void setTimeFromString(String timeString) {  // Set the time of the device from a string in ISO 8601 format
+4       struct tm tm;
+5       strptime(timeString.c_str(), "%Y-%m-%dT%H:%M:%SZ", &tm);
+6       time_t t = mktime(&tm);
+7       struct timeval now = { .tv_sec = t };
+8       settimeofday(&now, NULL);
+9   }
+
+Файл server.cpp:
+1   #include <WiFiClient.h>
+2   #include <WiFiClientSecure.h>
+3   #include <HTTPClient.h>
+4   #include <WebServer.h>
+5   #include <uri/UriBraces.h>
+6   #include <Adafruit_Sensor.h>
+7   #include <ArduinoJson.h>
+8
+9   #include "network.h"
+10  #include "measure.h"
+11  #include "lcd.h"
+12  #include "sensor.h"
+13  #include "utils.h"
+14
+15  WebServer server(80);
+16
+17  void setupServer() { // Function to setup the server
+18    server.on("/" + String(deviceID) + "/start", HTTP_POST, []() {
+19      if (measuring) {
+20        server.send(400, "application/json", "{\"error\":\"Measurement already in progress\"}");
+21        return;
+22      }
+23  
+24      String requestBody = server.arg("plain");
+25      JsonDocument doc;
+26      DeserializationError error = deserializeJson(doc, requestBody);
+27  
+28      if (error) {
+29        server.send(400, "application/json", "{\"error\":\"Invalid request\"}");
+30        return;
+31      }
+32  
+33      measureFrequency = doc["frequency"].as<int>() * 1000;
+34      setTimeFromString(doc["timestamp"].as<String>());
+35  
+36      startMeasure();
+37      server.send(200, "application/json", "{\"message\":\"Measurement started\"}");
+38    });
+39  
+40    server.on("/" + String(deviceID) + "/stop", HTTP_GET, []() {
+41      if (!measuring) {
+42        server.send(400, "application/json", "{\"error\":\"No measurement in progress\"}");
+43        return;
+44      }
+45      stopMeasure();
+46      
+47      accumulatedData = accumulatedData.substring(0, accumulatedData.length() - 1); // remove the last comma from the accumulated data
+48      server.send(200, "application/json", "{\"data\":[" + accumulatedData + "]}");
+49      accumulatedData = ""; // Clear accumulated data
+50    });
+51  }
+52
+53  void setup() { // Main setup function
+54    Serial.begin(serialBaudRate);
+55    delay(1000);
+56    determineBaudRate();
+57    Serial.begin(serialBaudRate);
+58    askDeviceId();
+59  
+60    // Initialize the DHT sensors and the photoresistor
+61    dht_air.begin();
+62    dht_gnd.begin();
+63    pinMode(LDR_PIN, INPUT);
+64    initializeLCD();
+65  
+66    // Connect to WiFi and setup the server
+67    connectToWiFi();
+68    setupServer();
+69    server.begin();
+70  }
+71
+72  void loop() { // Main loop function
+73    server.handleClient();
+74    if (measuring && millis() - lastMeasurement >= measureFrequency) {
+75      readData();
+76      lastMeasurement = millis(); // Update the last measurement time
+77    }
+78    delay(50); 
+79  }
