@@ -1,0 +1,872 @@
+1 Опис інженерних рішень
+
+Для створення програмного забезпечення для клієнтської частини платформи було використано фреймворк з відкритим кодом Angular 16 версії. 
+Код написаний на мові програмування TypeScript, розмітка сторінок у форматі HTML 5, використана бібліотека стилей Bootstrap 5. 
+Використовувалась інтергрована середа розробки WebStorm 2023 компанії JetBrains. Для роботи з jwt токенами у застосунку було використано бібліотеку auth0/angular-jwt.
+Кореневою папкою проекта є папка src (файлова структура проекту наведена в додатку А). 
+В ній знаходяться шаблонні файли, папка з графічним вмістом та папка з самим проектом (папка app). 
+У папці app знаходяться файли головного компоненту, папка з модулями, які містять в собі інші дочірні компоненти та папка з сервісами застосунку, 
+які відповідають за логіку його взаємодії з серверною частиною.
+
+2 Пояснення програмного коду
+
+При запуску застосунку основним файлом, що виконується, є main.ts, який ініціалізує запуск модулів Angular. Точка входу описана наступним чином:
+1 import { platformBrowserDynamic } from '@angular/platform-browser-dynamic';
+2 import { AppModule } from './app/app.module';
+3 
+4 platformBrowserDynamic().bootstrapModule(AppModule)
+5   .catch(err => console.error(err));
+	Після ініціалізації в main.ts управління передається до AppModule, який є головним модулем застосунку. В AppModule зібрані всі основні компоненти, 
+сервіси та модулі, що визначають структуру застосунку. Модуль описано так:
+1 @NgModule({
+2   declarations: [
+3     AppComponent  // Головний компонент застосунку
+4   ],
+5   imports: [
+6     BrowserModule,        // Модуль для запуску додатку в браузері
+7     AppRoutingModule,     // Модуль для маршрутизації у застосунку
+8     HttpClientModule,     // Модуль для виконання HTTP запитів
+9     CoreModule            // Власний модуль, що містить сервіси та інші ядрові компоненти
+10  ],
+11  providers: [
+12    HttpClient,           // Сервіс для виконання HTTP запитів
+13    {
+14      provide: HTTP_INTERCEPTORS,
+15      useClass: HttpTokenInterceptor, // Перехоплювач для додавання токену авторизації до запитів
+16      multi: true
+17    },
+18  ],
+19  bootstrap: [AppComponent] // Вказує Angular запустити AppComponent як кореневий компонент
+20 })
+21 export class AppModule {
+22 }
+AppComponent є кореневим компонентом, який Angular додає до DOM при запуску додатку. Життєвий цикл застосунку починається з AppComponent, де може відбуватися ініціалізація даних або перевірка авторизації користувача.
+Компоненти, сервіси та перехоплювачі, включені до AppModule, забезпечують основу для функціонування застосунку. Використання HttpClientModule дозволяє виконувати асинхронні запити до сервера, 
+а модуль CoreModule збирає всі необхідні ядрові компоненти і сервіси, що використовуються на багатьох сторінках застосунку. Система маршрутизації, визначена в AppRoutingModule, 
+керує навігацією в застосунку, а HttpTokenInterceptor автоматично додає токен авторизації до кожного вихідного запиту, забезпечуючи безпечний обмін даними.
+Структура основного шаблону застосунку має стандартний вигляд, в якому застосовано кілька ключових компонент Angular для керування вмістом та навігацією:
+1 <app-header></app-header>
+2 <router-outlet></router-outlet>
+3 <app-footer></app-footer>
+<app-header></app-header> – Компонент "шапки" веб-додатку. Він зазвичай містить навігаційне меню, логотип та інші елементи інтерфейсу, які мають бути доступні користувачу на всіх сторінках застосунку. 
+Цей компонент залишається сталим і не змінюється при переходах між сторінками.
+<router-outlet></router-outlet> – Директива Angular Router, яка служить як місце, куди динамічно завантажуються різні компоненти в залежності від взаємодії користувача з додатком та поточного маршруту. 
+Router Outlet використовується для зміни відображеного контенту без перезавантаження сторінки, що дозволяє реалізувати односторінкові застосунки (SPA).
+<app-footer></app-footer> – Компонент "підвалу" застосунку, який зазвичай містить інформацію про авторські права, посилання на політику конфіденційності, контактні дані та інші корисні посилання, 
+які користувач може потребувати незалежно від відвідуваної сторінки. Як і "шапка", "підвал" є сталим елементом, що не змінюється при навігації застосунку.
+У файлі app-routing.module.ts додатку Angular визначені маршрути для навігації між різними модулями. 
+Ці шляхи включають ліниве завантаження модулів для оптимізації продуктивності та розподілу залежностей за потребою. За допомогою authGuard, деякі шляхи захищені, забезпечуючи доступ лише для аутентифікованих користувачів. 
+Ось приклад роутінгу (можете переглянути поний список маршрутів у додатку Б): 
+1   {
+2     path: 'vineyard',
+3     loadChildren: () => import('./modules/vineyard/vineyard.module').then(m => m.VineyardModule),
+4     canActivate: [authGuard]
+5   },
+Цей маршрут веде до модуля VineyardModule, який включає VineyardComponent, що відповідає за управління даними виноградників.
+Компонент VineyardComponent використовується для управління інформацією про виноградники та пов'язані з ними елементи, 
+такі як блоки, групи та персонал. Взаємодія з сервером відбувається через різні сервіси, включені в компонент. 
+Нижче описано ключові аспекти взаємодії з сервером на основі коду компонента:
+1.	Ініціалізація та завантаження даних про користувача:
+1 ngOnInit(): void {
+2   this.userService.getMe().subscribe({
+3     next: (res) => {
+4       console.log(res.data)
+5       this.user = res.data as UserResponse;
+6       this.getVineyard(Number(this.user.vineyardId));
+7     },
+8   });
+9 }
+При ініціалізації компонента виконується запит до сервісу UserService для отримання даних про користувача, 
+після чого відбувається завантаження даних про виноградник (код UserService.ts можна переглянути у додатку В).
+2.	Завантаження інформації про виноградник:
+1 private getVineyard(id: number) {
+ 2   this.vineyardService.getVineyard({vineyardId: id}).subscribe({
+ 3     next: (res) => {
+ 4       console.log(res.data)
+ 5       const response = res.data as VineyardResponse;
+ 6       this.vineyard = response;
+ 7       // ...
+ 8       this.getStaff(res.data?.id as number);
+ 9       this.getBlocks(res.data?.id as number);
+10       this.getGroups(res.data?.id as number);
+11     },
+12   });
+Завантаження деталей виноградника з сервера і подальше завантаження пов'язаної інформації про персонал, блоки та групи. 
+Повний код цього компоненту можна подивитись у додатку Г.
+3. Створення, редагування та видалення даних: Функції, такі як createVineyard(), editVineyard(), і deleteVineyard(), 
+використовують відповідні сервіси для взаємодії з сервером, відправляючи POST, PUT або DELETE запити для управління даними.
+4. Обробка помилок:
+Під час виконання операцій, помилки, які повертає сервер, збираються та відображаються для інформування користувача про необхідність виправлень.
+До речі, сервер повертає помилки у певному форматі, в додатку є інтерфейс, який відображає структуру цього формату:
+1 export interface ApiError {
+2   details?: string;
+3   message?: string;
+4   status?: number;
+5   timestamp?: string;
+6 }
+Розмітка компонента VineyardComponent зосереджена на управлінні виноградником, але зараз розглянемо частину пов’язану з можливістю створення нового виноградника. 
+Основні аспекти розмітки включають візуальні елементи, умовні відображення, валідацію форм і динамічну взаємодію з користувачем. Детальніше про ключові моменти розмітки:
+1.	Умовне відображення компонентів:
+-	Відображення повідомлення про відсутність виноградника: Якщо у користувача немає асоційованого виноградника, виводиться повідомлення про це:
+1 <div *ngIf="!vineyard.id">
+2 <p class="text-center">You are not a member of any Vineyard.</p>
+-	Перемикач для відображення форми створення виноградника: За допомогою кнопок користувач може відкрити або закрити форму створення виноградника:
+1 <a *ngIf="!createVineyardMode" (click) ="toggleCreateVineyard()">
+2 <button type="button" class="btn btn-dark mb-4">Create Vineyard</button></a>
+
+2.	Валідація та повідомлення про помилки:
+-	Відображення помилок: Якщо при створенні виноградника виникають помилки, вони відображаються через список:
+1 <div class="alert alert-danger" role="alert" *ngIf="createVineyardErrorMessages.length">
+  2 <p *ngFor="let msg of createVineyardErrorMessages">{{ msg.message }}</p>
+3 </div>
+-	Валідація полів: Усі поля вимагають заповнення (required), і кнопка створення блокується, якщо не всі поля заповнені:
+1 <button class="btn btn-lg btn-outline-dark mb-4"
+2 		(click)="createVineyard()"
+3 		[disabled]="!createVineyardRequest.dbaName || !createVineyardRequest.companyName || ...
+4 		!createVineyardRequest.zipCode">Create
+5 </button>
+3.	Динамічна взаємодія:
+-	Two-way data binding ([(ngModel)]): Це забезпечує синхронізацію значень полів у формі з властивостями компонента, що полегшує збір та відправку даних:
+1	<input type="text" id="dba" name="dba" [(ngModel)]="createVineyardRequest.dbaName" ...>
+-	Обробники подій: Кнопки та інші елементи інтерфейсу мають обробники подій, такі як (click), 
+які активують методи компонента для виконання дій (наприклад, створення виноградника):
+1 (click)="createVineyard()"
+Ця розмітка демонструє гнучке управління станом інтерфейсу з допомогою Angular-специфічних директив і зв'язування даних,
+забезпечуючи інтуїтивно зрозумілі та зручні для користувача механізми для взаємодії з веб-додатком.
+
+3 Розробка діаграм
+
+3.1 UML діаграма прецедентів
+
+Для візуального представлення взаємодії між користувачами і системою була розроблена Use Case діаграма (рис. 2.1).
+
+3.2 UML діаграма компонентів
+
+Також було створено діаграму компонентів (рис. 2.2). Вона надає можливість візуалізувати, 
+як компоненти клієнтської частини взаємодіють між собою в межах системи. Крім того, вона дозволяє зрозуміти логіку роботи частини.
+
+3.3 UML діаграма пакетів
+
+Діаграма пакетів для клієнтської частини містить 17 пакетів (рис. 2.3). Зображено два основні пакети (modules, core), 
+9 підпакетів всередині modules та 8 підпакетів у батьківському пакеті core. Усі зв’язки між усими пакетами продемонстровані вкладеннями та стрілками.
+
+3.4 UML діаграма станів 
+
+Також було створено діаграму станів (рис. 2.4). Ця діаграма в загальних рисах показує процес роботи і взаємодію користувача з інтерфейсом. 
+Також вона певною мірою надає можливість зрозуміти дії та процеси, що відбувається в системі.
+
+4 Висновки 
+
+Під час виконання лабораторної роботи було створено клієнтську частину програмної системи для контролю за виноградниками. 
+
+ДОДАТОК А
+Файлова структура клієнтської частини 
+
+src
+|   favicon.ico
+|   index.html
+|   main.ts
+|   styles.css
+|
++---app
+|   |   app-routing.module.ts
+|   |   app.component.css
+|   |   app.component.html
+|   |   app.component.spec.ts
+|   |   app.component.ts
+|   |   app.module.ts
+|   |
+|   +---core
+|   |   |   core.module.ts
+|   |   |
+|   |   +---api
+|   |   |   |   api-configuration.ts
+|   |   |   |   api.module.ts
+|   |   |   |   base-service.ts
+|   |   |   |   models.ts
+|   |   |   |   request-builder.ts
+|   |   |   |   services.ts
+|   |   |   |   strict-http-response.ts
+|   |   |   |
+|   |   |   +---fn
+|   |   |   |   +---authentication
+|   |   |   |   |       authenticate.ts
+|   |   |   |   |       refresh.ts
+|   |   |   |   |       register.ts
+|   |   |   |   |
+|   |   |   |   +---block
+|   |   |   |   |       create-vineyard-1.ts
+|   |   |   |   |       delete-block.ts
+|   |   |   |   |       generate-block-report.ts
+|   |   |   |   |       get-block.ts
+|   |   |   |   |       get-blocks.ts
+|   |   |   |   |       update-block.ts
+|   |   |   |   |
+|   |   |   |   +---db-backup-controller
+|   |   |   |   |       backup-database.ts
+|   |   |   |   |       get-backups.ts
+|   |   |   |   |
+|   |   |   |   +---demo-controller
+|   |   |   |   |       hello.ts
+|   |   |   |   |
+|   |   |   |   +---device
+|   |   |   |   |       activate-device.ts
+|   |   |   |   |       create-device.ts
+|   |   |   |   |       deactivate-device.ts
+|   |   |   |   |       delete-device.ts
+|   |   |   |   |       get-device.ts
+|   |   |   |   |       update-device.ts
+|   |   |   |   |
+|   |   |   |   +---group
+|   |   |   |   |       add-vines-to-group.ts
+|   |   |   |   |       create-group.ts
+|   |   |   |   |       delete-group.ts
+|   |   |   |   |       get-group.ts
+|   |   |   |   |       get-groups.ts
+|   |   |   |   |       get-vines-in-group.ts
+|   |   |   |   |       get-vines-to-assign.ts
+|   |   |   |   |       remove-vines-from-group.ts
+|   |   |   |   |       update-group.ts
+|   |   |   |   |
+|   |   |   |   +---staff
+|   |   |   |   |       fire-staff.ts
+|   |   |   |   |       get-all-staff.ts
+|   |   |   |   |       hire-staff.ts
+|   |   |   |   |       update-staff.ts
+|   |   |   |   |
+|   |   |   |   +---user
+|   |   |   |   |       block-user.ts
+|   |   |   |   |       change-password.ts
+|   |   |   |   |       delete-user-by-id.ts
+|   |   |   |   |       delete-user.ts
+|   |   |   |   |       get-me.ts
+|   |   |   |   |       get-user.ts
+|   |   |   |   |       get-users.ts
+|   |   |   |   |       unblock-user.ts
+|   |   |   |   |       update-user.ts
+|   |   |   |   |
+|   |   |   |   +---vine
+|   |   |   |   |       create-vine.ts
+|   |   |   |   |       delete-vine.ts
+|   |   |   |   |       get-vine.ts
+|   |   |   |   |       get-vines.ts
+|   |   |   |   |       update-vine.ts
+|   |   |   |   |
+|   |   |   |   \---vineyard
+|   |   |   |           create-vineyard.ts
+|   |   |   |           delete-vineyard.ts
+|   |   |   |           get-vineyard.ts
+|   |   |   |           get-vineyards.ts
+|   |   |   |           update-vineyard.ts
+|   |   |   |
+|   |   |   +---guard
+|   |   |   |       auth.guard.spec.ts
+|   |   |   |       auth.guard.ts
+|   |   |   |
+|   |   |   +---interceptor
+|   |   |   |       http-token.interceptor.spec.ts
+|   |   |   |       http-token.interceptor.ts
+|   |   |   |
+|   |   |   +---models
+|   |   |   |       api-error.ts
+|   |   |   |       api-response-auth-response.ts
+|   |   |   |       api-response-block-response.ts
+|   |   |   |       api-response-device-activate-response.ts
+|   |   |   |       api-response-device-response.ts
+|   |   |   |       api-response-group-response.ts
+|   |   |   |       api-response-list-db-backup-response.ts
+|   |   |   |       api-response-pageable-response-list-block-response.ts
+|   |   |   |       api-response-pageable-response-list-group-response.ts
+|   |   |   |       api-response-pageable-response-list-group-vine-response.ts
+|   |   |   |       api-response-pageable-response-list-staff-response.ts
+|   |   |   |       api-response-pageable-response-list-user-response.ts
+|   |   |   |       api-response-pageable-response-list-vine-response.ts
+|   |   |   |       api-response-pageable-response-list-vineyard-response.ts
+|   |   |   |       api-response-staff-response.ts
+|   |   |   |       api-response-string.ts
+|   |   |   |       api-response-user-response.ts
+|   |   |   |       api-response-vine-response.ts
+|   |   |   |       api-response-vineyard-response.ts
+|   |   |   |       api-response-void.ts
+|   |   |   |       auth-response.ts
+|   |   |   |       authentication-request.ts
+|   |   |   |       block-report-request.ts
+|   |   |   |       block-request.ts
+|   |   |   |       block-response.ts
+|   |   |   |       change-password-request.ts
+|   |   |   |       db-backup-response.ts
+|   |   |   |       device-activate-response.ts
+|   |   |   |       device-request.ts
+|   |   |   |       device-response.ts
+|   |   |   |       group-request.ts
+|   |   |   |       group-response.ts
+|   |   |   |       group-vine-response.ts
+|   |   |   |       page-metadata.ts
+|   |   |   |       pageable-response-list-block-response.ts
+|   |   |   |       pageable-response-list-group-response.ts
+|   |   |   |       pageable-response-list-group-vine-response.ts
+|   |   |   |       pageable-response-list-staff-response.ts
+|   |   |   |       pageable-response-list-user-response.ts
+|   |   |   |       pageable-response-list-vine-response.ts
+|   |   |   |       pageable-response-list-vineyard-response.ts
+|   |   |   |       pageable.ts
+|   |   |   |       register-request.ts
+|   |   |   |       staff-request.ts
+|   |   |   |       staff-response.ts
+|   |   |   |       user-block-request.ts
+|   |   |   |       user-request.ts
+|   |   |   |       user-response.ts
+|   |   |   |       vine-request.ts
+|   |   |   |       vine-response.ts
+|   |   |   |       vines-group-assignment-request.ts
+|   |   |   |       vineyard-request.ts
+|   |   |   |       vineyard-response.ts
+|   |   |   |
+|   |   |   +---services
+|   |   |   |       authentication.service.ts
+|   |   |   |       block.service.ts
+|   |   |   |       db-backup-controller.service.ts
+|   |   |   |       demo-controller.service.ts
+|   |   |   |       device.service.ts
+|   |   |   |       group.service.ts
+|   |   |   |       staff.service.ts
+|   |   |   |       user.service.ts
+|   |   |   |       vine.service.ts
+|   |   |   |       vineyard.service.ts
+|   |   |   |
+|   |   |   \---token
+|   |   |           token.service.spec.ts
+|   |   |           token.service.ts
+|   |   |
+|   |   \---components
+|   |       +---footer
+|   |       |       footer.component.css
+|   |       |       footer.component.html
+|   |       |       footer.component.spec.ts
+|   |       |       footer.component.ts
+|   |       |
+|   |       +---header
+|   |       |       header.component.css
+|   |       |       header.component.html
+|   |       |       header.component.spec.ts
+|   |       |       header.component.ts
+|   |       |
+|   |       \---not-found
+|   |               not-found.component.css
+|   |               not-found.component.html
+|   |               not-found.component.spec.ts
+|   |               not-found.component.ts
+|   |
+|   \---modules
+|       +---admin
+|       |   |   admin-routing.module.ts
+|       |   |   admin.module.ts
+|       |   |
+|       |   \---pages
+|       |       \---admin-panel
+|       |               admin-panel.component.css
+|       |               admin-panel.component.html
+|       |               admin-panel.component.spec.ts
+|       |               admin-panel.component.ts
+|       |
+|       +---auth
+|       |   |   auth-routing.module.ts
+|       |   |   auth.module.ts
+|       |   |
+|       |   \---pages
+|       |       +---login
+|       |       |       login.component.css
+|       |       |       login.component.html
+|       |       |       login.component.spec.ts
+|       |       |       login.component.ts
+|       |       |
+|       |       \---register
+|       |               register.component.css
+|       |               register.component.html
+|       |               register.component.spec.ts
+|       |               register.component.ts
+|       |
+|       +---common
+|       |   |   common-routing.module.ts
+|       |   |   common.module.ts
+|       |   |
+|       |   \---pages
+|       |       \---home
+|       |               home.component.css
+|       |               home.component.html
+|       |               home.component.spec.ts
+|       |               home.component.ts
+|       |
+|       +---profile
+|       |   |   profile-routing.module.ts
+|       |   |   profile.module.ts
+|       |   |
+|       |   \---pages
+|       |       \---profile
+|       |               profile.component.css
+|       |               profile.component.html
+|       |               profile.component.spec.ts
+|       |               profile.component.ts
+|       |
+|       \---vineyard
+|           |   vineyard-routing.module.ts
+|           |   vineyard.module.ts
+|           |
+|           \---pages
+|               +---block
+|               |       block.component.css
+|               |       block.component.html
+|               |       block.component.spec.ts
+|               |       block.component.ts
+|               |
+|               +---group
+|               |       group.component.css
+|               |       group.component.html
+|               |       group.component.spec.ts
+|               |       group.component.ts
+|               |
+|               +---vine
+|               |       vine.component.css
+|               |       vine.component.html
+|               |       vine.component.spec.ts
+|               |       vine.component.ts
+|               |
+|               \---vineyard
+|                       vineyard.component.css
+|                       vineyard.component.html
+|                       vineyard.component.spec.ts
+|                       vineyard.component.ts
+|
++---assets
+|   |   .gitkeep
+|   |
+|   \---images
+|           logo.png
+|
+\---openapi
+        openapi.json
+
+ДОДАТОК Б
+Код маршрутів в app-routing.module.ts
+
+ 1 const routes: Routes = [
+ 2   {
+ 3     path: 'auth',
+ 4     loadChildren: () => import('./modules/auth/auth.module').then(m => m.AuthModule)
+ 5   },
+ 6   {
+ 7     path: 'profile',
+ 8     loadChildren: () => import('./modules/profile/profile.module').then(m => m.ProfileModule),
+ 9     canActivate: [authGuard]
+10   },
+11   {
+12     path: 'admin',
+13     loadChildren: () => import('./modules/admin/admin.module').then(m => m.AdminModule),
+14     canActivate: [authGuard]
+15   },
+16   {
+17     path: 'vineyard',
+18     loadChildren: () => import('./modules/vineyard/vineyard.module').then(m => m.VineyardModule),
+19     canActivate: [authGuard]
+20   },
+21   {
+22     path: '',
+23     loadChildren: () => import('./modules/common/common.module').then(m => m.CommonModule)
+24   },
+25   {
+26     path: '**',
+27     component: NotFoundComponent
+28   }
+29 ];
+
+ДОДАТОК В
+Код UserService.ts
+
+1 @Injectable({ providedIn: 'root' })
+ 2 export class UserService extends BaseService {
+ 3   constructor(config: ApiConfiguration, http: HttpClient) {
+ 4     super(config, http);
+ 5   }
+ 6
+ 8   static readonly GetUsersPath = '/api/v1/users';
+ 9
+20   getUsers$Response(params: GetUsers$Params, context?: HttpContext): Observable<StrictHttpResponse<ApiResponsePageableResponseListUserResponse>> {
+21     return getUsers(this.http, this.rootUrl, params, context);
+22   }
+23
+34   getUsers(params: GetUsers$Params, context?: HttpContext): Observable<ApiResponsePageableResponseListUserResponse> {
+35     return this.getUsers$Response(params, context).pipe(
+36       map((r: StrictHttpResponse<ApiResponsePageableResponseListUserResponse>): ApiResponsePageableResponseListUserResponse => r.body)
+37     );
+38   }
+39
+41   static readonly UpdateUserPath = '/api/v1/users';
+42
+53   updateUser$Response(params: UpdateUser$Params, context?: HttpContext): Observable<StrictHttpResponse<ApiResponseUserResponse>> {
+54     return updateUser(this.http, this.rootUrl, params, context);
+55   }
+56
+67   updateUser(params: UpdateUser$Params, context?: HttpContext): Observable<ApiResponseUserResponse> {
+68     return this.updateUser$Response(params, context).pipe(
+69       map((r: StrictHttpResponse<ApiResponseUserResponse>): ApiResponseUserResponse => r.body)
+70     );
+71   }
+72
+74   static readonly DeleteUserPath = '/api/v1/users';
+75
+86   deleteUser$Response(params?: DeleteUser$Params, context?: HttpContext): Observable<StrictHttpResponse<ApiResponseVoid>> {
+87     return deleteUser(this.http, this.rootUrl, params, context);
+88   }
+89
+100   deleteUser(params?: DeleteUser$Params, context?: HttpContext): Observable<ApiResponseVoid> {
+101     return this.deleteUser$Response(params, context).pipe(
+102       map((r: StrictHttpResponse<ApiResponseVoid>): ApiResponseVoid => r.body)
+103     );
+104   }
+105
+107   static readonly ChangePasswordPath = '/api/v1/users';
+108
+119   changePassword$Response(params: ChangePassword$Params, context?: HttpContext): Observable<StrictHttpResponse<ApiResponseString>> {
+120     return changePassword(this.http, this.rootUrl, params, context);
+121   }
+122
+133   changePassword(params: ChangePassword$Params, context?: HttpContext): Observable<ApiResponseString> {
+134     return this.changePassword$Response(params, context).pipe(
+135       map((r: StrictHttpResponse<ApiResponseString>): ApiResponseString => r.body)
+136     );
+137   }
+138
+140   static readonly UnblockUserPath = '/api/v1/users/unblock';
+141
+152   unblockUser$Response(params: UnblockUser$Params, context?: HttpContext): Observable<StrictHttpResponse<ApiResponseVoid>> {
+153     return unblockUser(this.http, this.rootUrl, params, context);
+154   }
+155
+166   unblockUser(params: UnblockUser$Params, context?: HttpContext): Observable<ApiResponseVoid> {
+167     return this.unblockUser$Response(params, context).pipe(
+168       map((r: StrictHttpResponse<ApiResponseVoid>): ApiResponseVoid => r.body)
+169     );
+170   }
+171
+173   static readonly BlockUserPath = '/api/v1/users/block';
+174
+185   blockUser$Response(params: BlockUser$Params, context?: HttpContext): Observable<StrictHttpResponse<ApiResponseVoid>> {
+186     return blockUser(this.http, this.rootUrl, params, context);
+187   }
+198
+199   blockUser(params: BlockUser$Params, context?: HttpContext): Observable<ApiResponseVoid> {
+200     return this.blockUser$Response(params, context).pipe(
+201       map((r: StrictHttpResponse<ApiResponseVoid>): ApiResponseVoid => r.body)
+202     );
+203   }
+204
+205   /** Path part for operation `getUser()` */
+206   static readonly GetUserPath = '/api/v1/users/{id}';
+207
+218   getUser$Response(params: GetUser$Params, context?: HttpContext): Observable<StrictHttpResponse<ApiResponseUserResponse>> {
+219     return getUser(this.http, this.rootUrl, params, context);
+220   }
+221
+232   getUser(params: GetUser$Params, context?: HttpContext): Observable<ApiResponseUserResponse> {
+233     return this.getUser$Response(params, context).pipe(
+234       map((r: StrictHttpResponse<ApiResponseUserResponse>): ApiResponseUserResponse => r.body)
+235     );
+236   }
+237
+238   /** Path part for operation `getMe()` */
+239   static readonly GetMePath = '/api/v1/users/me';
+240
+251   getMe$Response(params?: GetMe$Params, context?: HttpContext): Observable<StrictHttpResponse<ApiResponseUserResponse>> {
+252     return getMe(this.http, this.rootUrl, params, context);
+253   }
+254
+265   getMe(params?: GetMe$Params, context?: HttpContext): Observable<ApiResponseUserResponse> {
+266     return this.getMe$Response(params, context).pipe(
+267       map((r: StrictHttpResponse<ApiResponseUserResponse>): ApiResponseUserResponse => r.body)
+268     );
+269   }
+270
+272   static readonly DeleteUserByIdPath = '/api/v1/users/{userId}';
+273
+284   deleteUserById$Response(params: DeleteUserById$Params, context?: HttpContext): Observable<StrictHttpResponse<ApiResponseVoid>> {
+285     return deleteUserById(this.http, this.rootUrl, params, context);
+286   }
+287
+298   deleteUserById(params: DeleteUserById$Params, context?: HttpContext): Observable<ApiResponseVoid> {
+299     return this.deleteUserById$Response(params, context).pipe(
+300       map((r: StrictHttpResponse<ApiResponseVoid>): ApiResponseVoid => r.body)
+301     );
+302   }
+303 }
+
+ДОДАТОК Г
+Код vineyard.component.ts
+
+1 @Component({
+2   selector: 'app-vineyard',
+3   templateUrl: './vineyard.component.html',
+4   styleUrls: ['./vineyard.component.css']
+5 })
+6 export class VineyardComponent implements OnInit {
+7 
+8   user: UserResponse = {};
+9   vineyard: VineyardResponse = {};
+10   blocks: Array<BlockResponse> = [];
+11   groups: Array<GroupResponse> = [];
+12   staff: Array<StaffResponse> = [];
+13 
+14   createVineyardErrorMessages: Array<ApiError> = [];
+15   editVineyardErrorMessages: Array<ApiError> = [];
+16   createBlockErrorMessages: Array<ApiError> = [];
+17   createGroupErrorMessages: Array<ApiError> = [];
+18   hireEmployeeErrorMessages: Array<ApiError> = [];
+19 
+20   createVineyardRequest: VineyardRequest = {city: '', companyName: '', dbaName: '', email: '', phoneNumber: '', streetAddress: '', zipCode: ''};
+21   editVineyardRequest: VineyardRequest = {city: '', companyName: '', dbaName: '', email: '', phoneNumber: '', streetAddress: '', zipCode: ''};
+22   createBlockRequest: BlockRequest = {name: '', partitioningType: '', rowOrientation: '', rowSpacing: 0, trellisSystemType: '', vineSpacing: 0};
+23   createGroupRequest: GroupRequest = {description: '', formationReason: '', name: ''};
+24   hireEmployeeRequest: StaffRequest = {staffId: 0, vineyardRole: ''};
+25   editStaffRequest: StaffRequest = {staffId: 0, vineyardRole: ''};
+26 
+27   createVineyardMode = false;
+28   editVineyardMode = false;
+29   deleteVineyardMode = false;
+30   createBlockMode = false;
+31   createGroupMode = false;
+32   hireEmployeeMode = false;
+33   editStaffMode = false;
+34   editStaffId: number | undefined;
+35 
+36   constructor(
+37     private userService: UserService,
+38     private vineyardService: VineyardService,
+39     private blockService: BlockService,
+40     private groupService: GroupService,
+41     private staffService: StaffService
+42   ) {
+43   }
+44 
+45   ngOnInit(): void {
+46     this.userService.getMe().subscribe({
+47       next: (res) => {
+48         console.log(res.data)
+49         this.user = res.data as UserResponse;
+50         this.getVineyard(Number(this.user.vineyardId));
+51       },
+52     });
+53   }
+54 
+55   private getVineyard(id: number) {
+56     this.vineyardService.getVineyard({vineyardId: id}).subscribe({
+57       next: (res) => {
+58         console.log(res.data)
+59         const response = res.data as VineyardResponse;
+60         this.vineyard = response;
+61         this.editVineyardRequest = {
+62           city: response.city as string,
+63           companyName: response.companyName as string,
+64           dbaName: response.dbaName as string,
+65           email: response.email as string,
+66           phoneNumber: response.phoneNumber as string,
+67           streetAddress: response.streetAddress as string,
+68           zipCode: response.zipCode as string
+69         };
+70 
+71         this.getStaff(res.data?.id as number);
+72         this.getBlocks(res.data?.id as number);
+73         this.getGroups(res.data?.id as number);
+74       },
+75     });
+76   }
+77 
+78   private getStaff(id: number) {
+79     this.staffService.getAllStaff({
+80       pageable: {
+81         page: 0,
+82         size: 100,
+83         sort: []
+84       },
+85       vineyardId: id
+86     }).subscribe({
+87       next: (res) => {
+88         console.log(res.data)
+89         this.staff = res.data?.content as Array<StaffResponse>;
+90       },
+91     });
+92   }
+93 
+94   private getBlocks(id: number) {
+95     this.blockService.getBlocks({
+96       pageable: {
+97         page: 0,
+98       size: 100,
+99       sort: []
+100     },
+101     vineyardId: id
+102   }).subscribe({
+103     next: (res) => {
+104       console.log(res.data)
+105       this.blocks = res.data?.content as Array<BlockResponse>;
+106     },
+107   });
+108 }
+109 
+110 private getGroups(id: number) {
+111   this.groupService.getGroups({
+112     pageable: {
+113       page: 0,
+114       size: 100,
+115       sort: []
+116     },
+117     vineyardId: id
+118   }).subscribe({
+119     next: (res) => {
+120       console.log(res.data)
+121       this.groups = res.data?.content as Array<GroupResponse>;
+122     },
+123   });
+124 }
+125 
+126 createVineyard() {
+127   this.vineyardService.createVineyard({body: this.createVineyardRequest}).subscribe({
+128     next: (res) => {
+129       this.createVineyardMode = false;
+130       this.vineyard = res.data as VineyardResponse;
+131       this.user.role = 'VINEYARD_DIRECTOR';
+132       console.log(this.user);
+133     },
+134     error: (err) => {
+135       this.createVineyardErrorMessages = err.error.errors as Array<ApiError>;
+136     }
+137   });
+138 }
+139 
+140 editVineyard() {
+141   this.vineyardService.updateVineyard({
+142     vineyardId: this.vineyard.id as number,
+143     body: this.editVineyardRequest
+144   }).subscribe({
+145     next: (res) => {
+146       this.editVineyardMode = false;
+147       this.vineyard = res.data as VineyardResponse;
+148     },
+149     error: (err) => {
+150       this.editVineyardErrorMessages = err.error.errors as Array<ApiError>;
+151     }
+152   });
+153 }
+154 
+155 deleteVineyard() {
+156   this.vineyardService.deleteVineyard({vineyardId: this.vineyard.id as number}).subscribe({
+157     next: () => {
+158       this.deleteVineyardMode = false;
+159       this.user.role = 'USER';
+160       this.vineyard = {};
+161     },
+162   });
+163 }
+164 
+165 hireStaff() {
+166   this.staffService.hireStaff({
+167     body: this.hireEmployeeRequest,
+168     vineyardId: this.vineyard.id as number
+169   }).subscribe({
+170     next: () => {
+171       this.hireEmployeeMode = false;
+172       this.getStaff(this.vineyard.id as number)
+173     },
+174     error: (err) => {
+175       this.hireEmployeeErrorMessages = err.error.errors as Array<ApiError>;
+176     }
+177   });
+178 }
+179 
+180 fireStaff(id: number | undefined) {
+181   this.staffService.fireStaff({
+182     body: {staffId: id as number},
+183     vineyardId: this.vineyard.id as number
+184   }).subscribe({
+185     next: () => {
+186       this.getStaff(this.vineyard.id as number)
+187     },
+188   });
+189 }
+190 
+191 createBlock() {
+192   this.blockService.createBlock({
+193     body: this.createBlockRequest,
+194     vineyardId: this.vineyard.id as number
+195   }).subscribe({
+196     next: (res) => {
+197       this.createBlockMode = false;
+198       this.blocks.push(res.data as BlockResponse);
+199     },
+200     error: (err) => {
+201       this.createBlockErrorMessages = err.error.errors as Array<ApiError>;
+202     }
+203   });
+204 }
+205 
+206 createGroup() {
+207   this.groupService.createGroup({
+208     body: this.createGroupRequest,
+209     vineyardId: this.vineyard.id as number
+210   }).subscribe({
+211     next: (res) => {
+212       this.createGroupMode = false;
+213       this.groups.push(res.data as GroupResponse);
+214     },
+215     error: (err) => {
+216       this.createGroupErrorMessages = err.error.errors as Array<ApiError>;
+217     }
+218   });
+219 }
+220 
+221 editStaff() {
+222   this.staffService.updateStaff({
+223     body: this.editStaffRequest,
+224     vineyardId: this.vineyard.id as number
+225   }).subscribe({
+226     next: () => {
+227       this.editStaffMode = false;
+228       this.getStaff(this.vineyard.id as number)
+229     },
+230   });
+231 }
+232 
+233 toggleCreateVineyard() {
+234   this.createVineyardMode = !this.createVineyardMode;
+235 }
+236 
+237 toggleEditVineyard() {
+238   this.editVineyardMode = !this.editVineyardMode;
+239   this.editVineyardErrorMessages = [];
+240 }
+241 
+242 toggleDeleteVineyard() {
+243   this.deleteVineyardMode = !this.deleteVineyardMode;
+244 }
+245 
+246 toggleCreateBlock() {
+247   this.createBlockMode = !this.createBlockMode;
+248   this.createBlockErrorMessages = [];
+249 }
+250 
+251 toggleCreateGroup() {
+252   this.createGroupMode = !this.createGroupMode;
+253   this.createGroupErrorMessages = [];
+254 }
+255 
+256 toggleHireEmployee() {
+257   this.hireEmployeeMode = !this.hireEmployeeMode;
+258   this.hireEmployeeErrorMessages = [];
+259 }
+260 
+261 toggleEditStaff(id: number | undefined) {
+262   this.editStaffMode = !this.editStaffMode;
+263   this.editStaffId = id;
+264   const staff = this.staff.find(s => s.id === id);
+265   this.editStaffRequest.staffId = staff?.id as number;
+266   this.editStaffRequest.vineyardRole = staff?.role as string;
+267 }
+268 }
